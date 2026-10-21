@@ -20,6 +20,63 @@ jobs:
         with:
           python-version: "3.10"
 
+      - name: Install ATL and MFC
+        shell: pwsh
+        run: |
+          $installerDirectory = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer"
+          $vswhere = Join-Path $installerDirectory "vswhere.exe"
+          $setup = Join-Path $installerDirectory "setup.exe"
+
+          $vs = & $vswhere -latest -products * -property installationPath
+
+          if (-not $vs) {
+            throw "Visual Studio was not found."
+          }
+
+          Write-Host "Visual Studio: $vs"
+
+          $arguments = @(
+            "modify",
+            "--installPath", $vs,
+            "--add", "Microsoft.VisualStudio.Component.VC.14.44.17.14.ATL",
+            "--add", "Microsoft.VisualStudio.Component.VC.14.44.17.14.MFC",
+            "--quiet",
+            "--norestart",
+            "--nocache"
+          )
+
+          $process = Start-Process `
+            -FilePath $setup `
+            -ArgumentList $arguments `
+            -Wait `
+            -PassThru
+
+          if ($process.ExitCode -notin @(0, 3010)) {
+            throw "Visual Studio Installer failed with code $($process.ExitCode)."
+          }
+
+          $atlHeader = Get-ChildItem `
+            "$vs\VC\Tools\MSVC\14.44.*\atlmfc\include\atlbase.h" `
+            -ErrorAction SilentlyContinue
+
+          if (-not $atlHeader) {
+            throw "ATL installation finished, but atlbase.h was not found."
+          }
+
+          Write-Host "ATL header found: $($atlHeader.FullName)"
+
+      - name: Restore dependency cache
+        id: restore-dependencies
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            ${{ github.workspace }}/../ThirdParty
+            ${{ github.workspace }}/../Libraries
+          key: equagram-dependencies-${{ runner.os }}-${{ hashFiles('Telegram/build/prepare/prepare.py') }}-${{ github.run_id }}
+          restore-keys: |
+            equagram-dependencies-${{ runner.os }}-${{ hashFiles('Telegram/build/prepare/prepare.py') }}-
+            equagram-dependencies-${{ runner.os }}-
+
       - name: Prepare libraries
         shell: cmd
         run: |
@@ -30,8 +87,6 @@ jobs:
             exit /b 1
           )
 
-          echo Visual Studio: %VS%
-
           call "%VS%\VC\Auxiliary\Build\vcvars64.bat" -vcvars_ver=14.44
           if errorlevel 1 exit /b 1
 
@@ -39,6 +94,15 @@ jobs:
           if errorlevel 1 exit /b 1
 
           exit /b 0
+
+      - name: Save dependency cache
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            ${{ github.workspace }}/../ThirdParty
+            ${{ github.workspace }}/../Libraries
+          key: equagram-dependencies-${{ runner.os }}-${{ hashFiles('Telegram/build/prepare/prepare.py') }}-${{ github.run_id }}
 
       - name: Configure project
         shell: cmd
