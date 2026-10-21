@@ -1,0 +1,44 @@
+name: Build EquaGram for Windows
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-2025-vs2026
+    timeout-minutes: 360
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 1
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+
+      - name: Prepare and build
+        shell: cmd
+        run: |
+          set "VS="
+          for /f "usebackq tokens=*" %%i in (`"%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe" -latest -products * -property installationPath`) do set "VS=%%i"
+
+          echo Visual Studio: %VS%
+          call "%VS%\VC\Auxiliary\Build\vcvars64.bat" -vcvars_ver=14.44
+
+          call Telegram\build\prepare\win.bat
+
+          cd Telegram
+          call configure.bat x64 -D TDESKTOP_API_ID=${{ secrets.TDESKTOP_API_ID }} -D TDESKTOP_API_HASH=${{ secrets.TDESKTOP_API_HASH }}
+
+          cmake --build ..\out --config Release --target Telegram --parallel 4
+
+      - name: Upload Windows build
+        uses: actions/upload-artifact@v4
+        with:
+          name: EquaGram-Windows-x64
+          path: out/Release/
+          if-no-files-found: error
