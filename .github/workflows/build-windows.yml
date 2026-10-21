@@ -3,9 +3,12 @@ name: Build EquaGram for Windows
 on:
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 jobs:
   build:
-    runs-on: windows-2025-vs2026
+    runs-on: windows-2022
     timeout-minutes: 360
 
     steps:
@@ -20,72 +23,59 @@ jobs:
         with:
           python-version: "3.10"
 
-      - name: Install ATL and MFC
-        shell: pwsh
-        run: |
-          $installerDirectory = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer"
-          $vswhere = Join-Path $installerDirectory "vswhere.exe"
-          $setup = Join-Path $installerDirectory "setup.exe"
-
-          $vs = & $vswhere -latest -products * -property installationPath
-
-          if (-not $vs) {
-            throw "Visual Studio was not found."
-          }
-
-          Write-Host "Visual Studio: $vs"
-
-          $arguments = @(
-            "modify",
-            "--installPath", $vs,
-            "--add", "Microsoft.VisualStudio.Component.VC.14.44.17.14.ATL",
-            "--add", "Microsoft.VisualStudio.Component.VC.14.44.17.14.MFC",
-            "--quiet",
-            "--norestart",
-            "--nocache"
-          )
-
-          $process = Start-Process `
-            -FilePath $setup `
-            -ArgumentList $arguments `
-            -Wait `
-            -PassThru
-
-          if ($process.ExitCode -notin @(0, 3010)) {
-            throw "Visual Studio Installer failed with code $($process.ExitCode)."
-          }
-
-          $atlHeader = Get-ChildItem `
-            "$vs\VC\Tools\MSVC\14.44.*\atlmfc\include\atlbase.h" `
-            -ErrorAction SilentlyContinue
-
-          if (-not $atlHeader) {
-            throw "ATL installation finished, but atlbase.h was not found."
-          }
-
-          Write-Host "ATL header found: $($atlHeader.FullName)"
-
       - name: Restore dependency cache
-        id: restore-dependencies
         uses: actions/cache/restore@v4
         with:
           path: |
             ${{ github.workspace }}/../ThirdParty
             ${{ github.workspace }}/../Libraries
-          key: equagram-dependencies-${{ runner.os }}-${{ hashFiles('Telegram/build/prepare/prepare.py') }}-${{ github.run_id }}
+          key: equagram-vs2022-dependencies-${{ runner.os }}-${{ hashFiles('Telegram/build/prepare/prepare.py') }}-${{ github.run_id }}
           restore-keys: |
-            equagram-dependencies-${{ runner.os }}-${{ hashFiles('Telegram/build/prepare/prepare.py') }}-
-            equagram-dependencies-${{ runner.os }}-
+            equagram-vs2022-dependencies-${{ runner.os }}-${{ hashFiles('Telegram/build/prepare/prepare.py') }}-
+            equagram-vs2022-dependencies-${{ runner.os }}-
+
+      - name: Check Visual Studio components
+        shell: pwsh
+        run: |
+          $installerDirectory = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer"
+          $vswhere = Join-Path $installerDirectory "vswhere.exe"
+
+          $vs = & $vswhere `
+            -latest `
+            -products * `
+            -requires Microsoft.VisualStudio.Component.VC.ATL `
+            -property installationPath
+
+          if (-not $vs) {
+            throw "Visual Studio with ATL was not found."
+          }
+
+          Write-Host "Visual Studio with ATL: $vs"
+
+          $atlHeader = Get-ChildItem `
+            "$vs\VC\Tools\MSVC\*\atlmfc\include\atlbase.h" `
+            -ErrorAction SilentlyContinue |
+            Select-Object -First 1
+
+          if (-not $atlHeader) {
+            throw "ATL component is listed, but atlbase.h was not found."
+          }
+
+          Write-Host "ATL header: $($atlHeader.FullName)"
 
       - name: Prepare libraries
         shell: cmd
         run: |
+          set "VS="
+
           for /f "usebackq tokens=*" %%i in (`"%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe" -latest -products * -property installationPath`) do set "VS=%%i"
 
           if not defined VS (
             echo Visual Studio was not found.
             exit /b 1
           )
+
+          echo Visual Studio: %VS%
 
           call "%VS%\VC\Auxiliary\Build\vcvars64.bat" -vcvars_ver=14.44
           if errorlevel 1 exit /b 1
@@ -97,17 +87,25 @@ jobs:
 
       - name: Save dependency cache
         if: always()
+        continue-on-error: true
         uses: actions/cache/save@v4
         with:
           path: |
             ${{ github.workspace }}/../ThirdParty
             ${{ github.workspace }}/../Libraries
-          key: equagram-dependencies-${{ runner.os }}-${{ hashFiles('Telegram/build/prepare/prepare.py') }}-${{ github.run_id }}
+          key: equagram-vs2022-dependencies-${{ runner.os }}-${{ hashFiles('Telegram/build/prepare/prepare.py') }}-${{ github.run_id }}
 
       - name: Configure project
         shell: cmd
         run: |
+          set "VS="
+
           for /f "usebackq tokens=*" %%i in (`"%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe" -latest -products * -property installationPath`) do set "VS=%%i"
+
+          if not defined VS (
+            echo Visual Studio was not found.
+            exit /b 1
+          )
 
           call "%VS%\VC\Auxiliary\Build\vcvars64.bat" -vcvars_ver=14.44
           if errorlevel 1 exit /b 1
@@ -122,7 +120,14 @@ jobs:
       - name: Build EquaGram
         shell: cmd
         run: |
+          set "VS="
+
           for /f "usebackq tokens=*" %%i in (`"%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe" -latest -products * -property installationPath`) do set "VS=%%i"
+
+          if not defined VS (
+            echo Visual Studio was not found.
+            exit /b 1
+          )
 
           call "%VS%\VC\Auxiliary\Build\vcvars64.bat" -vcvars_ver=14.44
           if errorlevel 1 exit /b 1
