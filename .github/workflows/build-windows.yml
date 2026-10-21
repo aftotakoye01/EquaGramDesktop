@@ -20,10 +20,9 @@ jobs:
         with:
           python-version: "3.10"
 
-      - name: Prepare and build
+      - name: Prepare libraries
         shell: cmd
         run: |
-          set "VS="
           for /f "usebackq tokens=*" %%i in (`"%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe" -latest -products * -property installationPath`) do set "VS=%%i"
 
           if not defined VS (
@@ -36,24 +35,43 @@ jobs:
           call "%VS%\VC\Auxiliary\Build\vcvars64.bat" -vcvars_ver=14.44
           if errorlevel 1 exit /b 1
 
-          echo Preparing libraries...
           call Telegram\build\prepare\win.bat silent
           if errorlevel 1 exit /b 1
 
-          echo Configuring EquaGram...
+          exit /b 0
+
+      - name: Configure project
+        shell: cmd
+        run: |
+          for /f "usebackq tokens=*" %%i in (`"%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe" -latest -products * -property installationPath`) do set "VS=%%i"
+
+          call "%VS%\VC\Auxiliary\Build\vcvars64.bat" -vcvars_ver=14.44
+          if errorlevel 1 exit /b 1
+
           cd Telegram
+
           call configure.bat x64 -D TDESKTOP_API_ID=${{ secrets.TDESKTOP_API_ID }} -D TDESKTOP_API_HASH=${{ secrets.TDESKTOP_API_HASH }}
           if errorlevel 1 exit /b 1
 
-          echo Building EquaGram...
-          cmake --build ..\out --config Release --target Telegram --parallel 4
+          exit /b 0
+
+      - name: Build EquaGram
+        shell: cmd
+        run: |
+          for /f "usebackq tokens=*" %%i in (`"%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe" -latest -products * -property installationPath`) do set "VS=%%i"
+
+          call "%VS%\VC\Auxiliary\Build\vcvars64.bat" -vcvars_ver=14.44
           if errorlevel 1 exit /b 1
+
+          cmake --build out --config Release --target Telegram --parallel 4
+          if errorlevel 1 exit /b 1
+
+          exit /b 0
 
       - name: Upload Windows build
         uses: actions/upload-artifact@v4
         with:
           name: EquaGram-Windows-x64
-          path: |
-            out/Release/
+          path: out/Release/
           if-no-files-found: error
           retention-days: 7
