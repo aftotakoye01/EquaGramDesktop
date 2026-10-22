@@ -149,7 +149,7 @@ jobs:
             ${{ github.workspace }}/../Libraries
           key: equagram-vs2022-dependencies-${{ runner.os }}-${{ hashFiles('Telegram/build/prepare/prepare.py') }}-${{ github.run_id }}-${{ github.run_attempt }}
 
-      - name: Configure project
+      - name: Configure project without PCH
         shell: cmd
         env:
           TDESKTOP_API_ID: ${{ secrets.TDESKTOP_API_ID }}
@@ -164,10 +164,53 @@ jobs:
 
           call configure.bat x64 ^
             -D TDESKTOP_API_ID=%TDESKTOP_API_ID% ^
-            -D TDESKTOP_API_HASH=%TDESKTOP_API_HASH%
+            -D TDESKTOP_API_HASH=%TDESKTOP_API_HASH% ^
+            -D CMAKE_DISABLE_PRECOMPILE_HEADERS:BOOL=ON
           if errorlevel 1 exit /b 1
 
           exit /b 0
+
+      - name: Verify PCH is disabled
+        shell: pwsh
+        run: |
+          $cachePath = "out/CMakeCache.txt"
+
+          if (-not (Test-Path -LiteralPath $cachePath)) {
+            throw "CMakeCache.txt was not generated."
+          }
+
+          $disabled = Select-String `
+            -Path $cachePath `
+            -Pattern '^CMAKE_DISABLE_PRECOMPILE_HEADERS:BOOL=ON$' `
+            -Quiet
+
+          if (-not $disabled) {
+            throw "CMAKE_DISABLE_PRECOMPILE_HEADERS is not ON."
+          }
+
+          $projects = @(
+            Get-ChildItem -Path out -Recurse -Filter *.vcxproj
+          )
+
+          if ($projects.Count -eq 0) {
+            throw "No Visual Studio projects were generated."
+          }
+
+          foreach ($project in $projects) {
+            [xml]$xml = Get-Content -LiteralPath $project.FullName -Raw
+
+            $nodes = $xml.SelectNodes(
+              "//*[local-name()='PrecompiledHeader']"
+            )
+
+            foreach ($node in $nodes) {
+              if ($node.InnerText.Trim() -in @("Create", "Use")) {
+                throw "PCH is still enabled in: $($project.FullName)"
+              }
+            }
+          }
+
+          Write-Host "Verified: generated projects do not create or use PCH."
 
       - name: Show available memory
         shell: pwsh
@@ -179,7 +222,7 @@ jobs:
           Write-Host ("Total virtual memory: {0:N1} GB" -f ($os.TotalVirtualMemorySize / 1MB))
           Write-Host ("Free virtual memory: {0:N1} GB" -f ($os.FreeVirtualMemory / 1MB))
 
-      - name: Build EquaGram with reduced memory usage
+      - name: Build EquaGram without PCH
         shell: cmd
         env:
           _CL_: /MP1 /FS
