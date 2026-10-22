@@ -115,7 +115,6 @@ jobs:
 
           echo Compiler directory: %VCToolsInstallDir%
           echo Windows SDK version: %WindowsSDKVersion%
-          echo Build tools and ATL checks passed.
 
       - name: Restore dependency cache
         uses: actions/cache/restore@v4
@@ -170,15 +169,33 @@ jobs:
 
           exit /b 0
 
-      - name: Build EquaGram
+      - name: Show available memory
+        shell: pwsh
+        run: |
+          $os = Get-CimInstance Win32_OperatingSystem
+
+          Write-Host ("Total RAM: {0:N1} GB" -f ($os.TotalVisibleMemorySize / 1MB))
+          Write-Host ("Free RAM: {0:N1} GB" -f ($os.FreePhysicalMemory / 1MB))
+          Write-Host ("Total virtual memory: {0:N1} GB" -f ($os.TotalVirtualMemorySize / 1MB))
+          Write-Host ("Free virtual memory: {0:N1} GB" -f ($os.FreeVirtualMemory / 1MB))
+
+      - name: Build EquaGram with reduced memory usage
         shell: cmd
         env:
-          _CL_: /MP2 /FS
+          _CL_: /MP1 /FS
+          MSBUILDDISABLENODEREUSE: "1"
         run: |
           call "%VS_INSTALL_PATH%\VC\Auxiliary\Build\vcvars64.bat" -vcvars_ver=14.44
           if errorlevel 1 exit /b 1
 
-          cmake --build out --config Release --target Telegram --parallel 2
+          cmake --build out ^
+            --config Release ^
+            --target Telegram ^
+            --parallel 1 ^
+            -- ^
+            /p:PreferredToolArchitecture=x64 ^
+            /p:UseMultiToolTask=false ^
+            /nr:false
           if errorlevel 1 exit /b 1
 
           exit /b 0
