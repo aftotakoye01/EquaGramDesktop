@@ -12,6 +12,23 @@ jobs:
     timeout-minutes: 360
 
     steps:
+      - name: Check Telegram API secrets
+        shell: pwsh
+        env:
+          TDESKTOP_API_ID: ${{ secrets.TDESKTOP_API_ID }}
+          TDESKTOP_API_HASH: ${{ secrets.TDESKTOP_API_HASH }}
+        run: |
+          if ($env:TDESKTOP_API_ID -notmatch '^[1-9][0-9]*$') {
+            throw "Add a valid TDESKTOP_API_ID to repository Actions secrets. Use digits only, without spaces or quotes."
+          }
+
+          if ($env:TDESKTOP_API_HASH -notmatch '^[a-fA-F0-9]{32}$') {
+            throw "Add a valid TDESKTOP_API_HASH to repository Actions secrets. Use 32 hexadecimal characters, without spaces or quotes."
+          }
+
+          Write-Host "API secrets are present and have the expected format."
+          Write-Host "Their validity will be checked by Telegram when signing in."
+
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
@@ -23,59 +40,67 @@ jobs:
         with:
           python-version: "3.10"
 
+      - name: Check build tools and ATL
+        shell: cmd
+        run: |
+          set "VS="
+
+          for /f "usebackq tokens=*" %%i in (`"%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe" -latest -products * -version "[17.0,18.0)" -property installationPath`) do set "VS=%%i"
+
+          if not defined VS (
+            echo ERROR: Visual Studio 2022 was not found.
+            exit /b 1
+          )
+
+          call "%VS%\VC\Auxiliary\Build\vcvars64.bat" -vcvars_ver=14.44
+          if errorlevel 1 exit /b 1
+
+          if not exist "%VCToolsInstallDir%atlmfc\include\atlbase.h" (
+            echo ERROR: atlbase.h is missing for the selected MSVC toolset.
+            exit /b 1
+          )
+
+          if not exist "%VCToolsInstallDir%atlmfc\include\atlcomcli.h" (
+            echo ERROR: atlcomcli.h is missing for the selected MSVC toolset.
+            exit /b 1
+          )
+
+          python --version
+          if errorlevel 1 exit /b 1
+
+          cmake --version
+          if errorlevel 1 exit /b 1
+
+          ninja --version
+          if errorlevel 1 exit /b 1
+
+          echo Compiler directory: %VCToolsInstallDir%
+          echo Windows SDK version: %WindowsSDKVersion%
+          echo Build tools and ATL checks passed.
+
       - name: Restore dependency cache
         uses: actions/cache/restore@v4
         with:
           path: |
             ${{ github.workspace }}/../ThirdParty
             ${{ github.workspace }}/../Libraries
-          key: equagram-vs2022-dependencies-${{ runner.os }}-${{ hashFiles('Telegram/build/prepare/prepare.py') }}-${{ github.run_id }}
+          key: equagram-vs2022-dependencies-${{ runner.os }}-${{ hashFiles('Telegram/build/prepare/prepare.py') }}-${{ github.run_id }}-${{ github.run_attempt }}
           restore-keys: |
             equagram-vs2022-dependencies-${{ runner.os }}-${{ hashFiles('Telegram/build/prepare/prepare.py') }}-
             equagram-vs2022-dependencies-${{ runner.os }}-
 
-      - name: Check Visual Studio components
-        shell: pwsh
-        run: |
-          $installerDirectory = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer"
-          $vswhere = Join-Path $installerDirectory "vswhere.exe"
-
-          $vs = & $vswhere `
-            -latest `
-            -products * `
-            -requires Microsoft.VisualStudio.Component.VC.ATL `
-            -property installationPath
-
-          if (-not $vs) {
-            throw "Visual Studio with ATL was not found."
-          }
-
-          Write-Host "Visual Studio with ATL: $vs"
-
-          $atlHeader = Get-ChildItem `
-            "$vs\VC\Tools\MSVC\*\atlmfc\include\atlbase.h" `
-            -ErrorAction SilentlyContinue |
-            Select-Object -First 1
-
-          if (-not $atlHeader) {
-            throw "ATL component is listed, but atlbase.h was not found."
-          }
-
-          Write-Host "ATL header: $($atlHeader.FullName)"
-
       - name: Prepare libraries
+        id: prepare
         shell: cmd
         run: |
           set "VS="
 
-          for /f "usebackq tokens=*" %%i in (`"%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe" -latest -products * -property installationPath`) do set "VS=%%i"
+          for /f "usebackq tokens=*" %%i in (`"%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe" -latest -products * -version "[17.0,18.0)" -property installationPath`) do set "VS=%%i"
 
           if not defined VS (
-            echo Visual Studio was not found.
+            echo ERROR: Visual Studio 2022 was not found.
             exit /b 1
           )
-
-          echo Visual Studio: %VS%
 
           call "%VS%\VC\Auxiliary\Build\vcvars64.bat" -vcvars_ver=14.44
           if errorlevel 1 exit /b 1
@@ -86,53 +111,62 @@ jobs:
           exit /b 0
 
       - name: Save dependency cache
-        if: always()
+        if: ${{ always() && (steps.prepare.outcome == 'success' || steps.prepare.outcome == 'failure') }}
         continue-on-error: true
         uses: actions/cache/save@v4
         with:
           path: |
             ${{ github.workspace }}/../ThirdParty
             ${{ github.workspace }}/../Libraries
-          key: equagram-vs2022-dependencies-${{ runner.os }}-${{ hashFiles('Telegram/build/prepare/prepare.py') }}-${{ github.run_id }}
+          key: equagram-vs2022-dependencies-${{ runner.os }}-${{ hashFiles('Telegram/build/prepare/prepare.py') }}-${{ github.run_id }}-${{ github.run_attempt }}
 
       - name: Configure project
         shell: cmd
+        env:
+          TDESKTOP_API_ID: ${{ secrets.TDESKTOP_API_ID }}
+          TDESKTOP_API_HASH: ${{ secrets.TDESKTOP_API_HASH }}
+          CMAKE_GENERATOR: Visual Studio 17 2022
         run: |
           set "VS="
 
-          for /f "usebackq tokens=*" %%i in (`"%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe" -latest -products * -property installationPath`) do set "VS=%%i"
+          for /f "usebackq tokens=*" %%i in (`"%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe" -latest -products * -version "[17.0,18.0)" -property installationPath`) do set "VS=%%i"
 
           if not defined VS (
-            echo Visual Studio was not found.
+            echo ERROR: Visual Studio 2022 was not found.
             exit /b 1
           )
 
           call "%VS%\VC\Auxiliary\Build\vcvars64.bat" -vcvars_ver=14.44
           if errorlevel 1 exit /b 1
 
-          cd Telegram
+          cd /d "%GITHUB_WORKSPACE%\Telegram"
+          if errorlevel 1 exit /b 1
 
-          call configure.bat x64 -D TDESKTOP_API_ID=${{ secrets.TDESKTOP_API_ID }} -D TDESKTOP_API_HASH=${{ secrets.TDESKTOP_API_HASH }}
+          call configure.bat x64 ^
+            -D TDESKTOP_API_ID=%TDESKTOP_API_ID% ^
+            -D TDESKTOP_API_HASH=%TDESKTOP_API_HASH%
           if errorlevel 1 exit /b 1
 
           exit /b 0
 
       - name: Build EquaGram
         shell: cmd
+        env:
+          _CL_: /MP2 /FS
         run: |
           set "VS="
 
-          for /f "usebackq tokens=*" %%i in (`"%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe" -latest -products * -property installationPath`) do set "VS=%%i"
+          for /f "usebackq tokens=*" %%i in (`"%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe" -latest -products * -version "[17.0,18.0)" -property installationPath`) do set "VS=%%i"
 
           if not defined VS (
-            echo Visual Studio was not found.
+            echo ERROR: Visual Studio 2022 was not found.
             exit /b 1
           )
 
           call "%VS%\VC\Auxiliary\Build\vcvars64.bat" -vcvars_ver=14.44
           if errorlevel 1 exit /b 1
 
-          cmake --build out --config Release --target Telegram --parallel 4
+          cmake --build out --config Release --target Telegram --parallel 2
           if errorlevel 1 exit /b 1
 
           exit /b 0
