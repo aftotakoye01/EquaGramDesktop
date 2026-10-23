@@ -1,6 +1,6 @@
 # EquaGram
 
-![AyuGram Logo](.github/sticker.webp)
+![EquaGram Logo](.github/sticker.webp)
 
 [ English  |   [Русский](README-RU.md) ]
 
