@@ -1,6 +1,6 @@
 # AyuGram
 
-![AyuGram Logo](.github/AyuGram.png) ![AyuChan](.github/AyuChan.png)
+![AyuGram Logo](.github/sticker.webp)
 
 [ English  |   [Русский](README-RU.md) ]
 
