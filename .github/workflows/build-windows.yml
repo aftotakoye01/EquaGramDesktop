@@ -1,16 +1,16 @@
 name: Build EquaGram for Windows
-
+​
 on:
   workflow_dispatch:
-
+​
 permissions:
   contents: read
-
+​
 jobs:
   build:
     runs-on: windows-2022
     timeout-minutes: 360
-
+​
     steps:
       - name: Check Telegram API secrets
         shell: pwsh
@@ -25,18 +25,18 @@ jobs:
             throw "TDESKTOP_API_HASH must contain 32 hexadecimal characters."
           }
           Write-Host "API secrets have the expected format."
-
+​
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
           submodules: recursive
           fetch-depth: 1
-
+​
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.10"
-
+​
       - name: Find Visual Studio 2022
         shell: pwsh
         run: |
@@ -62,7 +62,7 @@ jobs:
           }
           "VS_INSTALL_PATH=$vs" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
           Write-Host "Visual Studio: $vs"
-
+​
       - name: Check build tools and ATL
         shell: cmd
         run: |
@@ -83,7 +83,36 @@ jobs:
           if errorlevel 1 exit /b 1
           ninja --version
           if errorlevel 1 exit /b 1
-
+​
+      - name: Check disk space for pagefile
+        shell: pwsh
+        run: |
+          $disk = Get-PSDrive -Name C
+          Write-Host ("Free space on C: {0:N1} GB" -f ($disk.Free / 1GB))
+          if ($disk.Free -lt 40GB) {
+            throw "Not enough free space on C: for a 32 GB pagefile plus working space."
+          }
+​
+      - name: Configure 32 GB pagefile
+        uses: al-cheb/configure-pagefile-action@a3b6ebd6b634da88790d9c58d4b37a7f4a7b8708 # v1.4
+        with:
+          minimum-size: 32GB
+          maximum-size: 32GB
+          disk-root: "C:"
+​
+      - name: Verify active pagefile
+        shell: pwsh
+        run: |
+          $pagefiles = @(Get-CimInstance Win32_PageFileUsage)
+          $pagefiles | Format-Table Name, AllocatedBaseSize, CurrentUsage -AutoSize
+          $allocatedMB = ($pagefiles | Measure-Object -Property AllocatedBaseSize -Sum).Sum
+          if ($allocatedMB -lt 32768) {
+            throw "The active pagefile is smaller than 32 GB. Build stopped before dependency preparation."
+          }
+          $os = Get-CimInstance Win32_OperatingSystem
+          Write-Host ("Total virtual memory: {0:N1} GB" -f ($os.TotalVirtualMemorySize / 1MB))
+          Write-Host ("Free virtual memory: {0:N1} GB" -f ($os.FreeVirtualMemory / 1MB))
+​
       - name: Resolve dependency cache paths
         id: paths
         shell: pwsh
@@ -95,7 +124,7 @@ jobs:
           "libraries=$libraries" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
           Write-Host "ThirdParty: $thirdParty"
           Write-Host "Libraries: $libraries"
-
+​
       - name: Restore dependency cache
         uses: actions/cache/restore@v4
         with:
@@ -106,7 +135,7 @@ jobs:
           restore-keys: |
             equagram-vs2022-dependencies-${{ runner.os }}-${{ hashFiles('Telegram/build/prepare/prepare.py') }}-
             equagram-vs2022-dependencies-${{ runner.os }}-
-
+​
       - name: Prepare libraries
         id: prepare
         shell: cmd
@@ -116,7 +145,7 @@ jobs:
           call Telegram\build\prepare\win.bat silent
           if errorlevel 1 exit /b 1
           exit /b 0
-
+​
       - name: Save dependency cache
         if: ${{ always() && (steps.prepare.outcome == 'success' || steps.prepare.outcome == 'failure') }}
         continue-on-error: true
@@ -126,7 +155,7 @@ jobs:
             ${{ steps.paths.outputs.third_party }}
             ${{ steps.paths.outputs.libraries }}
           key: equagram-vs2022-dependencies-${{ runner.os }}-${{ hashFiles('Telegram/build/prepare/prepare.py') }}-${{ github.run_id }}-${{ github.run_attempt }}
-
+​
       - name: Configure project with header wrappers
         shell: cmd
         env:
@@ -144,7 +173,7 @@ jobs:
             -D CMAKE_DISABLE_PRECOMPILE_HEADERS:BOOL=OFF
           if errorlevel 1 exit /b 1
           exit /b 0
-
+​
       - name: Check generated header wrappers
         shell: pwsh
         run: |
@@ -161,7 +190,7 @@ jobs:
           }
           Write-Host "Generated header wrappers: $($headers.Count)"
           Write-Host "The build will use /Y- to parse these headers normally instead of using binary PCH."
-
+​
       - name: Show available memory
         shell: pwsh
         run: |
@@ -170,7 +199,7 @@ jobs:
           Write-Host ("Free RAM: {0:N1} GB" -f ($os.FreePhysicalMemory / 1MB))
           Write-Host ("Total virtual memory: {0:N1} GB" -f ($os.TotalVirtualMemorySize / 1MB))
           Write-Host ("Free virtual memory: {0:N1} GB" -f ($os.FreeVirtualMemory / 1MB))
-
+​
       - name: Build EquaGram with normal header parsing
         shell: cmd
         env:
@@ -189,7 +218,7 @@ jobs:
             /nr:false
           if errorlevel 1 exit /b 1
           exit /b 0
-
+​
       - name: Upload Windows build
         uses: actions/upload-artifact@v4
         with:
@@ -197,3 +226,4 @@ jobs:
           path: out/Release/
           if-no-files-found: error
           retention-days: 7
+​
